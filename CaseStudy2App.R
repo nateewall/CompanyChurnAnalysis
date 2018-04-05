@@ -12,8 +12,8 @@ require(reshape)
 require(corrgram)
 require(pROC)
 
-setwd("~/Desktop/R-Work")
-train<-read.xls("CaseStudy2data_2.xlsx", sheet = 1, header=TRUE)
+trainurl<-"https://raw.githubusercontent.com/nateewall/DDSAnalytics_Churn/master/CustomerAttritionData.csv"
+train<-read.csv(text=getURL(trainurl), header=TRUE)
 
 ui <- dashboardPage(
   dashboardHeader(title = "Attrition Analysis"),
