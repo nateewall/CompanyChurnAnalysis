@@ -214,3 +214,6 @@ The other group seems to be made up of younger, early career employees in techni
 
 ##Conclusion
 Depending on the priorities of the company they could proactively target one group by offering different benefits that are considered valuable to the group of interest.
+
+##For all available data and Shiny App used in presenation please go to the following link
+https://github.com/nateewall/DDSAnalytics_Churn
