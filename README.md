@@ -9,9 +9,9 @@ Our data has details on 1470 different employees including whether those employe
 ### Code
 As part of this analysis there are two R programs in this repository.
 
-CaseStudy2App.R: R Shiny application provides the user the ability to interactively explore the data to find any interesting patterns in the underlying data. Additionally, it provides a convenient method to assess the model's performance and inspect the data contributing to the model's prediction.
+N2M Attrition App.R: R Shiny application provides the user the ability to interactively explore the data to find any interesting patterns in the underlying data. Additionally, it provides a convenient method to assess the model's performance and inspect the data contributing to the model's prediction.
 
-PredictingAttrition.Rmd: R Markdown file outlining the methodology used for training the algorithm. Additionally, it includes different metrics and graphs used to assess the model.
+DevelopingAttritionModel.Rmd: R Markdown file outlining the methodology used for training the algorithm. Additionally, it includes different metrics and graphs used to assess the model.
 
 ### References
 
