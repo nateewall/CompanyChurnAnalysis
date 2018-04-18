@@ -1,0 +1,216 @@
+---
+title: "Predicting Attrition"
+author: "Muthu Palanisamy Nathan Lara Nathan Wall"
+date: "April 16, 2018"
+output: html_document
+---
+
+#DDSAnalytics - Talent Management Analysis
+DDSAnalytics Specializes in Talent Management for Fortune 1000 Company.Talent Management is the process of developing and retaining employees.To gain over competition DDSAnalytics wanted leverage data science for talent management.N2M Data Science Team is commissioned to conduct analysis on their existing employee data in reducing (or) preventing employee turnover. DDSAnalytics existing employee data has 1470 records with 35 variables including those who left the company N2M will utilize various machine learning & data science techniques to understand the features contributing to employee attritionThe goal is to identify the top5 reason, apply the methodology to predict attrition for the HR team to act on the findings.
+
+##Preparing the Data
+
+```{r,warning=FALSE,message=FALSE}
+#libraries used for this analysis
+library(RCurl) #read data from web
+library(caret) #machine learning and cross validation
+library(pROC) #plot ROC curves
+library(tidyquant) #data manipulation
+library(lime) #exploring predictions in detail
+library(ROSE)#oversampling the attrition obs
+library(dplyr) #manipulate data 
+library(cluster) #k-means clustering on mixed types
+```
+
+The data was provided by the client and was fairly clean and didn't need too much additional pre-processing, aside from removing a few of the duplicated columns we left the data largely as it was given to us.
+
+```{r}
+#Reading the data in from Github
+URL <- 'https://raw.githubusercontent.com/nateewall/DDSAnalytics_Churn/master/CustomerAttritionData.csv'
+df <-read.csv(text=getURL(URL), header=T)
+
+#Let pull out the employee number and employee count, standard hourse and over18
+df <- df[,-c(9,10,22,27)]
+
+```
+
+Based on our review of the data there are no obvious outliers in the numeric variables and the categorical variables do not have a high proportion of NA.
+
+However, one thing that stands out is the how unbalanced the attrition counts are with only 16% of the observations with a "success" meaning attrition.
+
+To account for the unbalance in our dependent variable we chose to over sample from the attrition group in the training set.
+
+```{r}
+smp_size <- floor(0.70 * nrow(df))
+
+## set the seed to make your partition reproductible
+set.seed(269)
+train_ind <- sample(seq_len(nrow(df)), size = smp_size)
+
+train <- df[train_ind, ] #training data
+test <- df[-train_ind, ] #testing data
+
+#first we are going to over sample the churn obs to balance the data 
+train.both <- ovun.sample(Attrition ~ ., data = train, method = "both", p=0.4, N=1000, seed = 1)$data
+```
+
+This shows that our training set is now oversampled from the attrition group, and should increase the likelihood of correctly identifying candidates at risk of attrition. In order to determine what features would best allow us to predict the correct employees we trained a Gradient Boosting algorithm using out "balanced" training set.
+
+##Training the Model
+```{r echo=FALSE, message = FALSE}
+#declare features & targets
+predictors <- names(train.both[,-2])
+outcome <- "Attrition"
+#----------------------Gradient Boosted Model---------------------#
+#using 10-fold cross validation with 2 repeats for categorizing into 2 class.
+#we also output the probability of class for plotting ROC 
+objControl <- trainControl(method = "repeatedcv", number=10,repeats = 2,
+                           summaryFunction = twoClassSummary,
+                           classProbs = TRUE)
+#train the model using GBM
+objModel <- train(train.both[,predictors], train.both[,outcome], 
+                  method = "gbm",
+                  metric = "ROC",
+                  trControl=objControl,  
+                  preProc = c("center", "scale"),
+                  verbose = FALSE)
+confusionMatrix(objModel)
+```
+
+The trained model showed ~90% accuracy at predicting whether or not an employee would quit or not. However, we know that due to the fact that we oversampled so we will see how the model performs on new data it has not seen before.
+
+##Interpreting Results
+```{r}
+#get probability predictions
+probPred <- predict(object=objModel, test[,predictors], type = "prob")
+
+#plot the ROC
+gbm.ROC <- roc(predictor=probPred$Yes,
+               response=test$Attrition,
+               levels=rev(levels(test$Attrition)))
+#produce the plot
+plot(gbm.ROC,main="GBM ROC")
+```
+
+The ROC plot shows that the sensitivity (true positive/true positives + false negatives) levels out close to 1 very quickly at a specificity of ~0.7. Which gives us some indication that our model over predicts on attrition while reducing the amount of false negatives in our predictions.
+
+We then take the class probabilities from our model to assign a decision on whether an employee will leave or not. As we know that there is high cost associated with employee attrition we set our decision boundary purposely low. While this may reduce our overall accuracy and precision, it will reduce our recall or how many of the employees who resulted in attrition we predicted correctly.
+
+```{r}
+#create the prediction
+pred <- ifelse(probPred$Yes > 0.40,"Yes","No")
+x <- table(test$Attrition, pred)
+# Performance analysis
+tn <- x[1]
+tp <- x[4]
+fp <- x[3]
+fn <- x[2]
+
+accuracy <- (tp + tn) / (tp + tn + fp + fn)
+misclassification_rate <- 1 - accuracy
+recall <- tp / (tp + fn)
+precision <- tp / (tp + fp)
+null_error_rate <- tn / (tp + tn + fp + fn)
+cat(
+paste(
+paste0("Accuracy:", accuracy),
+paste0("Misclassification Rate:", misclassification_rate),
+paste0("Recall:", recall),
+paste0("Precision:", precision),
+paste0("Null Error Rate:", null_error_rate),
+sep="\n"
+)
+)
+```
+
+As we see here our overall accuracy is lower at ~82% and we are about 50/50 when it comes to our precision or predicting attrition for observation where attrition occured. However, of all the employees that actually left, we predicted them correctly 75% of the time. 
+
+Lets unwind some of the details of our model to understand what features are valuable and how the lead to the predictions they do.
+
+```{r}
+relInf <-summary(objModel, plot = F)
+#plot the relative importance
+ggplot(relInf, aes(x=reorder(var, rel.inf), y=rel.inf)) +
+  geom_bar(stat='identity') +
+  coord_flip()
+```
+
+Based on this we can see the features that are most influence with predicting attrition are:
+1) Overtime
+2) Job Role
+3) Monthly Income
+4) Age
+5) Daily Rate
+
+In order to understand how these and other features actually lead to a prediction we can look at a few of the employee's who left to see how they were labeled by the algorithm and what features led to that prediction.
+
+```{r}
+# Run lime() on training set
+explainer <- lime::lime(
+  as.data.frame(train.both[,-2]), 
+  model          = objModel, 
+  bin_continuous = FALSE)
+
+# Run explain() on explainer
+explanation <- lime::explain(
+  as.data.frame(test[which(test$Attrition =='Yes'),-2][5:8,]), 
+  explainer    = explainer, 
+  n_labels     = 1, 
+  n_features   = 6,
+  kernel_width = 0.5)
+
+plot_features(explanation) +
+  labs(title = "Feature Importance Visualizations",
+       subtitle = "All are from where Attrition='Yes'")
+
+```
+
+These examples show that thing like Lab Technicians & Sales Exec's that work a over time were all labeled as 'Yes' Correctly in the model. 
+
+
+```{r}
+# Run explain() on explainer
+explanation <- lime::explain(
+  as.data.frame(test[which(test$Attrition =='No'),-2][3:6,]), 
+  explainer    = explainer, 
+  n_labels     = 1, 
+  n_features   = 6,
+  kernel_width = 0.5)
+
+plot_features(explanation) +
+  labs(title = "Feature Importance Visualizations",
+       subtitle = "All are from where Attrition='No'")
+
+```
+
+The examples of the observations that were correctly predicted not to result in attrition it seems that employee's not working overtime are more likely not to leave, and those that do work overtime and stay work as research scientists or other higher level job roles.
+
+
+##Targeting at-risk Employees
+To better help develop some definition around the employees who actually leave we took some of the top features from our model to try and cluster the employees who left the company to develop an "at-risk" profile.
+
+```{r}
+#clustering customers who left the company using the top 10 features of the model.
+dfCluster <- df[which(df$Attrition == 'Yes'), c(as.vector(relInf$var[1:10]))]
+#calculate distance between obs
+gower_dist <- daisy(dfCluster,
+                    metric = "gower")
+
+pam_fit <- pam(gower_dist, diss = TRUE, k = 2)
+
+pam_results <- dfCluster %>%
+  mutate(cluster = pam_fit$clustering) %>%
+  group_by(cluster) %>%
+  do(the_summary = summary(.))
+
+pam_results$the_summary
+```
+
+It is difficult to cleanly seperate the employees who leave the company into two seperate groups, this does appear to support some of the insights we got from looking at some of the individual classifications.
+
+One group appears to largely be driven by older employees with more work experience who work overtime in largely sales roles. Many of them have worked for multiple companies in the past, but maybe are still farely new to this corporation.
+
+The other group seems to be made up of younger, early career employees in technical roles. They seem to make less money than the other group, and for many this is there first company they have worked for.
+
+##Conclusion
+Depending on the priorities of the company they could proactively target one group by offering different benefits that are considered valuable to the group of interest.
